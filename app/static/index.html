@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>XDWorld Agent</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #0f0f13;
+      --surface: #1a1a24;
+      --surface2: #23233a;
+      --border: #2a2a40;
+      --primary: #6c5ce7;
+      --primary-hover: #7c6ff7;
+      --text: #e8e8f0;
+      --text-dim: #8888a8;
+      --user-bg: #6c5ce7;
+      --bot-bg: #1e1e32;
+      --radius: 16px;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 20px 28px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      backdrop-filter: blur(20px);
+    }
+
+    .logo {
+      width: 40px; height: 40px;
+      background: linear-gradient(135deg, var(--primary), #a78bfa);
+      border-radius: 12px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; font-weight: 700;
+    }
+
+    header h1 { font-size: 18px; font-weight: 600; }
+    header p { font-size: 12px; color: var(--text-dim); }
+
+    /* Chat area */
+    main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px 28px;
+      display: none;
+      flex-direction: column;
+      gap: 20px;
+      scroll-behavior: smooth;
+    }
+    main.active { display: flex; }
+
+    /* Welcome screen */
+    #welcome {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      text-align: center;
+      padding: 40px;
+    }
+    #welcome.hidden { display: none; }
+    .welcome-icon { font-size: 48px; margin-bottom: 8px; }
+    #welcome h2 { font-size: 22px; font-weight: 600; }
+    #welcome p { color: var(--text-dim); font-size: 14px; }
+
+    .suggestions {
+      display: flex; flex-wrap: wrap; gap: 8px;
+      justify-content: center; margin-top: 16px; max-width: 600px;
+    }
+    .suggestion {
+      padding: 10px 18px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      font-size: 13px;
+      color: var(--text);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .suggestion:hover {
+      background: var(--primary);
+      border-color: var(--primary);
+      transform: translateY(-1px);
+    }
+
+    /* Messages */
+    .msg { display: flex; gap: 12px; max-width: 780px; width: 100%; margin: 0 auto; animation: fadeIn 0.3s ease; }
+    .msg.user { flex-direction: row-reverse; }
+    .avatar {
+      width: 36px; height: 36px; border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 16px; flex-shrink: 0;
+    }
+    .msg.bot .avatar { background: var(--surface2); }
+    .msg.user .avatar { background: var(--primary); }
+    .bubble {
+      padding: 14px 18px;
+      border-radius: var(--radius);
+      line-height: 1.65;
+      font-size: 14px;
+      max-width: 85%;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .msg.user .bubble { background: var(--user-bg); border-bottom-right-radius: 4px; }
+    .msg.bot .bubble { background: var(--bot-bg); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+    .bubble code {
+      background: rgba(108,92,231,0.15);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 13px;
+      font-family: 'Fira Code', 'Consolas', monospace;
+    }
+    .bubble pre {
+      background: #12121c;
+      padding: 14px;
+      border-radius: 10px;
+      overflow-x: auto;
+      margin: 10px 0;
+      border: 1px solid var(--border);
+    }
+    .bubble pre code { background: none; padding: 0; }
+
+    /* Typing indicator */
+    .typing .bubble { display: flex; align-items: center; gap: 6px; padding: 16px 22px; }
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--text-dim);
+      animation: bounce 1.4s infinite ease-in-out;
+    }
+    .dot:nth-child(2) { animation-delay: 0.16s; }
+    .dot:nth-child(3) { animation-delay: 0.32s; }
+
+    /* Footer */
+    footer {
+      padding: 16px 28px 24px;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+    }
+    form {
+      display: flex; gap: 10px;
+      max-width: 780px; margin: 0 auto;
+    }
+    input {
+      flex: 1;
+      padding: 14px 20px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      color: var(--text);
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    input:focus { border-color: var(--primary); }
+    input::placeholder { color: var(--text-dim); }
+    button[type="submit"] {
+      width: 48px; height: 48px;
+      background: var(--primary);
+      border: none; border-radius: 14px;
+      color: white; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.2s;
+      flex-shrink: 0;
+    }
+    button[type="submit"]:hover { background: var(--primary-hover); transform: scale(1.05); }
+    button[type="submit"]:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes bounce { 0%,80%,100% { transform: scale(0.6); } 40% { transform: scale(1); } }
+
+    main::-webkit-scrollbar { width: 6px; }
+    main::-webkit-scrollbar-track { background: transparent; }
+    main::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+  <header>
+    <div class="logo">🌍</div>
+    <div>
+      <h1>XDWorld Agent</h1>
+      <p>지도 엔진 메뉴얼 AI 어시스턴트</p>
+    </div>
+  </header>
+  <main id="chat"></main>
+  <div id="welcome">
+    <div class="welcome-icon">💬</div>
+    <h2>무엇이든 물어보세요</h2>
+    <p>XDWorld 지도 엔진 메뉴얼을 기반으로 답변합니다</p>
+    <div class="suggestions" id="suggestions"></div>
+  </div>
+  <footer>
+    <form id="form">
+      <input id="input" type="text" placeholder="질문을 입력하세요..." autocomplete="off" />
+      <button type="submit" id="sendBtn">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/>
+        </svg>
+      </button>
+    </form>
+  </footer>
+
+  <script>
+    const chat = document.getElementById('chat');
+    const welcome = document.getElementById('welcome');
+    const form = document.getElementById('form');
+    const input = document.getElementById('input');
+    const sendBtn = document.getElementById('sendBtn');
+    const suggestions = document.getElementById('suggestions');
+
+    const SUGGESTIONS = [
+      '레이어 추가 방법은?',
+      '카메라 이동 방법 알려줘',
+      '3D 객체 생성은 어떻게 해?',
+      '지형 편집 기능 설명해줘',
+    ];
+
+    SUGGESTIONS.forEach(text => {
+      const el = document.createElement('div');
+      el.className = 'suggestion';
+      el.textContent = text;
+      el.onclick = () => sendMessage(text);
+      suggestions.appendChild(el);
+    });
+
+    function addMessage(role, content) {
+      const div = document.createElement('div');
+      const icon = role === 'user' ? '👤' : '🌍';
+      div.className = `msg ${role}`;
+      div.innerHTML = `
+        <div class="avatar">${icon}</div>
+        <div class="bubble">${formatContent(content)}</div>
+      `;
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    function formatContent(text) {
+      return text
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
+        .replace(/`([^`]+)`/g, '<code>$1</code>');
+    }
+
+    function showTyping() {
+      const div = document.createElement('div');
+      div.className = 'msg bot typing';
+      div.id = 'typing';
+      div.innerHTML = `
+        <div class="avatar">🌍</div>
+        <div class="bubble"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+      `;
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    function removeTyping() {
+      const el = document.getElementById('typing');
+      if (el) el.remove();
+    }
+
+    async function sendMessage(text) {
+      if (!text.trim()) return;
+
+      welcome.classList.add('hidden');
+      chat.classList.add('active');
+
+      addMessage('user', text);
+      input.value = '';
+      input.disabled = true;
+      sendBtn.disabled = true;
+      showTyping();
+
+      try {
+        const res = await fetch('/api/v1/ask', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question: text }),
+        });
+        const data = await res.json();
+        removeTyping();
+        if (res.ok) {
+          addMessage('bot', data.answer);
+        } else {
+          addMessage('bot', '⚠️ 오류가 발생했습니다: ' + (data.detail || '알 수 없는 오류'));
+        }
+      } catch (err) {
+        removeTyping();
+        addMessage('bot', '⚠️ 서버에 연결할 수 없습니다.');
+      } finally {
+        input.disabled = false;
+        sendBtn.disabled = false;
+        input.focus();
+      }
+    }
+
+    form.addEventListener('submit', e => {
+      e.preventDefault();
+      sendMessage(input.value);
+    });
+
+    input.focus();
+  </script>
+</body>
+</html>
