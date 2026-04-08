@@ -1,6 +1,9 @@
 """벡터스토어 싱글턴 관리 모듈."""
 
+from __future__ import annotations
+
 from pathlib import Path
+from typing import Optional
 
 from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings
@@ -9,7 +12,7 @@ from app.core.config import get_settings
 from app.core.exceptions import VectorStoreNotFoundError
 from app.core.logging import logger
 
-_vectorstore: FAISS | None = None
+_vectorstore: Optional[FAISS] = None
 
 
 def get_embeddings() -> OpenAIEmbeddings:
@@ -43,7 +46,7 @@ def load_vectorstore(*, force_reload: bool = False) -> FAISS:
     return _vectorstore
 
 
-def get_retriever(k: int | None = None):
+def get_retriever(k: Optional[int] = None):
     settings = get_settings()
     vs = load_vectorstore()
     return vs.as_retriever(search_kwargs={"k": k or settings.retriever_k})

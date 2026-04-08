@@ -1,5 +1,7 @@
 """Markdown 문서를 벡터스토어로 인제스트하는 모듈."""
 
+from __future__ import annotations
+
 from pathlib import Path
 
 from langchain_core.documents import Document

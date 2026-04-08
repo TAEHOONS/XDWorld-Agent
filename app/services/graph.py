@@ -4,7 +4,9 @@ LLM이 검색 도구 호출 여부를 스스로 판단하고,
 필요하면 재검색하는 Agent 구조입니다.
 """
 
-from typing import Annotated, TypedDict
+from __future__ import annotations
+
+from typing import Annotated, List, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
@@ -22,7 +24,7 @@ from app.services.prompts import AGENT_SYSTEM_PROMPT
 # ── State ──────────────────────────────────────────────
 
 class AgentState(TypedDict):
-    messages: Annotated[list[BaseMessage], add_messages]
+    messages: Annotated[List[BaseMessage], add_messages]
 
 
 # ── Tool ───────────────────────────────────────────────

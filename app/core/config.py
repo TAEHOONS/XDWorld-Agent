@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 from functools import lru_cache
+from typing import List
 
 from pydantic_settings import BaseSettings
 
@@ -17,7 +20,7 @@ class Settings(BaseSettings):
     # App
     app_title: str = "XDWorld Agent"
     app_version: str = "1.0.0"
-    cors_origins: list[str] = ["*"]
+    cors_origins: List[str] = ["*"]
     log_level: str = "INFO"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
