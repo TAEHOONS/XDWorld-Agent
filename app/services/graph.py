@@ -135,10 +135,10 @@ _EXPLICIT_PATTERN = re.compile(
     re.DOTALL,
 )
 
-# 일반 마크다운 코드블록: ```lang\n...\n```
+# 일반 마크다운 코드블록: ```lang\n...\n``` (들여쓰기 포함)
 _MD_CODE_BLOCK_PATTERN = re.compile(
-    r"```(\w+)?\s*\n(.*?)\n```",
-    re.DOTALL,
+    r"^[ \t]*```(\w+)?\s*\n(.*?)\n[ \t]*```",
+    re.DOTALL | re.MULTILINE,
 )
 
 # 언어 힌트 → language 매핑
