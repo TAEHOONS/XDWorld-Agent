@@ -129,31 +129,70 @@ def _build_graph():
 _graph = _build_graph()
 
 
-_CODE_SUGGESTIONS_PATTERN = re.compile(
+# LLM이 json:code_suggestions 블록을 사용한 경우
+_EXPLICIT_PATTERN = re.compile(
     r"```json:code_suggestions\s*\n(.*?)\n```",
     re.DOTALL,
 )
 
+# 일반 마크다운 코드블록: ```lang\n...\n```
+_MD_CODE_BLOCK_PATTERN = re.compile(
+    r"```(\w+)?\s*\n(.*?)\n```",
+    re.DOTALL,
+)
+
+# 언어 힌트 → language 매핑
+_LANG_MAP = {
+    "javascript": "js", "js": "js", "typescript": "ts", "ts": "ts",
+    "vue": "vue", "html": "html", "css": "css", "python": "python",
+    "py": "python", "json": "json", "bash": "bash", "sh": "bash",
+}
+
 
 def _parse_response(content: str) -> Dict[str, Any]:
-    """LLM 응답에서 answer 텍스트와 code_suggestions JSON을 분리합니다."""
-    match = _CODE_SUGGESTIONS_PATTERN.search(content)
-    if not match:
+    """LLM 응답에서 answer 텍스트와 code_suggestions를 분리합니다.
+
+    1순위: ```json:code_suggestions 블록이 있으면 그대로 파싱
+    2순위: 일반 마크다운 코드블록을 자동 추출해서 code_suggestions로 변환
+    """
+    # ── 1순위: 명시적 json:code_suggestions 블록 ──
+    explicit = _EXPLICIT_PATTERN.search(content)
+    if explicit:
+        answer = content[: explicit.start()].strip()
+        trailing = content[explicit.end() :].strip()
+        if trailing:
+            answer = f"{answer}\n\n{trailing}" if answer else trailing
+        try:
+            suggestions = json.loads(explicit.group(1))
+            if not isinstance(suggestions, list):
+                suggestions = [suggestions]
+            return {"answer": answer, "code_suggestions": suggestions or None}
+        except (json.JSONDecodeError, TypeError):
+            logger.warning("code_suggestions JSON 파싱 실패, 폴백으로 코드블록 추출")
+
+    # ── 2순위: 마크다운 코드블록 자동 추출 ──
+    blocks = list(_MD_CODE_BLOCK_PATTERN.finditer(content))
+    if not blocks:
         return {"answer": content.strip(), "code_suggestions": None}
 
-    answer = content[: match.start()].strip()
-    # json:code_suggestions 블록 뒤에 남은 텍스트가 있으면 answer에 붙임
-    trailing = content[match.end() :].strip()
-    if trailing:
-        answer = f"{answer}\n\n{trailing}" if answer else trailing
+    suggestions = []
+    answer = content
+    for match in reversed(blocks):
+        lang_hint = (match.group(1) or "").lower()
+        code = match.group(2).strip()
+        if not code:
+            continue
+        language = _LANG_MAP.get(lang_hint, lang_hint or "js")
+        suggestions.append({
+            "filename": f"example.{language}" if language else "example.js",
+            "language": language or "js",
+            "code": code,
+        })
+        # answer에서 코드블록 제거
+        answer = answer[: match.start()].rstrip() + answer[match.end() :].lstrip()
 
-    try:
-        suggestions = json.loads(match.group(1))
-        if not isinstance(suggestions, list):
-            suggestions = [suggestions]
-    except (json.JSONDecodeError, TypeError):
-        logger.warning("code_suggestions JSON 파싱 실패, answer에 원본 포함")
-        return {"answer": content.strip(), "code_suggestions": None}
+    suggestions.reverse()
+    answer = answer.strip()
 
     return {
         "answer": answer,
