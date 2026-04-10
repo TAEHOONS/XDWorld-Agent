@@ -200,14 +200,23 @@ def _parse_response(content: str) -> Dict[str, Any]:
     }
 
 
-def run_agent(question: str) -> Dict[str, Any]:
+def run_agent(question: str, source_code: Optional[str] = None, file_name: Optional[str] = None, error_info: Optional[str] = None) -> Dict[str, Any]:
     """질문을 받아 Agent 파이프라인을 실행하고 answer + code_suggestions를 반환합니다."""
     if not question or not question.strip():
         raise ValueError("질문이 비어있습니다.")
 
+    # 컨텍스트 추가
+    context_parts = [question.strip()]
+    if source_code:
+        context_parts.append(f"\n\n현재 코드:\n```{file_name or 'vue'}\n{source_code}\n```")
+    if error_info:
+        context_parts.append(f"\n\n에러 정보:\n{error_info}")
+    
+    full_question = "\n".join(context_parts)
+
     initial_messages = [
         {"role": "system", "content": AGENT_SYSTEM_PROMPT},
-        HumanMessage(content=question.strip()),
+        HumanMessage(content=full_question),
     ]
 
     result = _graph.invoke({"messages": initial_messages})
@@ -219,6 +228,67 @@ def run_agent(question: str) -> Dict[str, Any]:
             return _parse_response(msg.content)
 
     return {"answer": "답변을 생성하지 못했습니다.", "code_suggestions": None}
+
+
+async def run_agent_stream(question: str, source_code: Optional[str] = None, file_name: Optional[str] = None, error_info: Optional[str] = None):
+    """LangGraph 실행하면서 각 노드 진행 상황을 yield"""
+    if not question or not question.strip():
+        raise ValueError("질문이 비어있습니다.")
+
+    # 컨텍스트 추가
+    context_parts = [question.strip()]
+    if source_code:
+        context_parts.append(f"\n\n현재 코드:\n```{file_name or 'vue'}\n{source_code}\n```")
+    if error_info:
+        context_parts.append(f"\n\n에러 정보:\n{error_info}")
+    
+    full_question = "\n".join(context_parts)
+
+    initial_messages = [
+        {"role": "system", "content": AGENT_SYSTEM_PROMPT},
+        HumanMessage(content=full_question),
+    ]
+
+    collected_content = []
+    
+    async for event in _graph.astream_events(
+        {"messages": initial_messages},
+        version="v1"
+    ):
+        kind = event["event"]
+        
+        # 노드 시작
+        if kind == "on_chain_start":
+            name = event.get("name", "")
+            if name == "agent":
+                yield {"type": "step", "step": "analyzing", "message": "질문 분석 중..."}
+            elif name == "tools":
+                yield {"type": "step", "step": "searching", "message": "문서 검색 중..."}
+        
+        # 노드 종료
+        elif kind == "on_chain_end":
+            name = event.get("name", "")
+            if name == "tools":
+                yield {"type": "step", "step": "generating", "message": "답변 생성 중..."}
+        
+        # LLM 토큰 스트리밍
+        elif kind == "on_chat_model_stream":
+            chunk = event["data"]["chunk"]
+            if hasattr(chunk, "content") and chunk.content:
+                collected_content.append(chunk.content)
+                yield {"type": "token", "content": chunk.content}
+    
+    # 최종 결과 파싱
+    full_content = "".join(collected_content)
+    if full_content:
+        parsed = _parse_response(full_content)
+        yield {
+            "type": "result",
+            "answer": parsed["answer"],
+            "code_suggestions": parsed.get("code_suggestions")
+        }
+    else:
+        yield {"type": "result", "answer": "답변을 생성하지 못했습니다.", "code_suggestions": None}
 
 
 if __name__ == "__main__":

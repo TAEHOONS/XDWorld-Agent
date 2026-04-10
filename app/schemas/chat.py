@@ -1,12 +1,25 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Optional, Literal
 
 from pydantic import BaseModel, Field
 
 
 class AskRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=2000, description="질문 내용")
+    source_code: Optional[str] = Field(None, description="현재 편집 중인 소스코드")
+    file_name: Optional[str] = Field(None, description="파일명")
+    error_info: Optional[str] = Field(None, description="에러 정보")
+
+
+class StreamEvent(BaseModel):
+    """Streaming 이벤트"""
+    type: Literal["start", "step", "token", "result", "error", "done"]
+    step: Optional[Literal["analyzing", "searching", "generating", "validating"]] = None
+    message: Optional[str] = None
+    content: Optional[str] = None
+    answer: Optional[str] = None
+    code_suggestions: Optional[List[dict]] = None
 
 
 class CodeSuggestion(BaseModel):
