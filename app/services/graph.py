@@ -269,6 +269,20 @@ _LANG_MAP = {
 }
 
 
+def _strip_initialize_wrapper(code: str) -> str:
+    """initialize() 함수로 감싸진 코드에서 내부 코드만 추출."""
+    match = re.match(
+        r'^\s*function\s+initialize\s*\(\s*\)\s*\{([\s\S]*)\}\s*$',
+        code.strip()
+    )
+    if not match:
+        return code
+    inner = match.group(1).strip()
+    lines = inner.split('\n')
+    dedented = '\n'.join(l[2:] if l.startswith('  ') else l for l in lines)
+    return dedented.strip()
+
+
 def _parse_response(content: str) -> Dict[str, Any]:
     explicit = _EXPLICIT_PATTERN.search(content)
     if explicit:
@@ -280,6 +294,9 @@ def _parse_response(content: str) -> Dict[str, Any]:
             suggestions = json.loads(explicit.group(1))
             if not isinstance(suggestions, list):
                 suggestions = [suggestions]
+            for s in suggestions:
+                if isinstance(s.get("code"), str):
+                    s["code"] = _strip_initialize_wrapper(s["code"])
             return {"answer": answer, "code_suggestions": suggestions or None}
         except (json.JSONDecodeError, TypeError):
             logger.warning("code_suggestions JSON 파싱 실패, 폴백으로 코드블록 추출")
@@ -299,7 +316,7 @@ def _parse_response(content: str) -> Dict[str, Any]:
         suggestions.append({
             "filename": f"example.{language}" if language else "example.js",
             "language": language or "js",
-            "code": code,
+            "code": _strip_initialize_wrapper(code),
         })
         answer = answer[: match.start()].rstrip() + answer[match.end() :].lstrip()
 
