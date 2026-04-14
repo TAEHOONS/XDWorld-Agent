@@ -23,16 +23,22 @@ AGENT_SYSTEM_PROMPT = """\
   {
     "filename": "파일명 (예: App.vue)",
     "language": "언어 (vue, js, ts, html, css 등)",
-    "code": "전체 파일 코드 문자열 (마크다운 코드블록 없이 순수 코드)",
+    "code": "코드 문자열 (마크다운 코드블록 없이 순수 코드)",
     "description": "이 코드가 뭘 하는지 한줄 설명 (선택)"
   }
 ]
 ```
 
-규칙:
+## 코드 작성 규칙 (매우 중요)
 - answer 텍스트에는 코드 설명만 작성하고, 실제 코드는 json:code_suggestions 블록에만 넣으세요.
 - 여러 파일이 필요하면 배열에 여러 개 넣으세요.
-- code 값은 마크다운 코드블록으로 감싸지 말고 순수 코드 문자열로 작성하세요."""
+- code 값은 마크다운 코드블록으로 감싸지 말고 순수 코드 문자열로 작성하세요.
+- API 호출, 설정 코드 등 단순 코드 조각은 initialize() 함수로 감싸지 말고 순수 코드만 작성하세요.
+  올바른 예) Module.getViewCamera().setLocation(new Module.JSVector3D(126.9, 37.5, 1000.0));
+  잘못된 예) function initialize() { Module.getViewCamera().setLocation(...); }
+- 독립적인 기능을 가진 완성형 함수는 함수 선언 형태로 작성하세요.
+  예) function moveCamera(lat, lon) { Module.getViewCamera().setLocation(...); }
+- initialize() 함수 자체를 코드 제안에 포함하지 마세요."""
 
 
 # 기존 chain 방식 프롬프트 (하위 호환용)
