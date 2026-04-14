@@ -318,13 +318,32 @@ def _build_full_question(question: str, source_code: Optional[str], file_name: O
     return "\n".join(parts)
 
 
-def run_agent(question: str, source_code: Optional[str] = None, file_name: Optional[str] = None, error_info: Optional[str] = None) -> Dict[str, Any]:
+def _build_history_messages(history: Optional[List[dict]]) -> List[BaseMessage]:
+    """이전 대화 히스토리를 LangChain 메시지로 변환 (최근 10개만)"""
+    if not history:
+        return []
+    messages = []
+    for h in history[-10:]:
+        role = h.get("role", "")
+        content = h.get("content", "")
+        if not content:
+            continue
+        if role == "user":
+            messages.append(HumanMessage(content=content))
+        elif role in ("agent", "assistant"):
+            messages.append(AIMessage(content=content))
+    return messages
+
+
+def run_agent(question: str, source_code: Optional[str] = None, file_name: Optional[str] = None, error_info: Optional[str] = None, history: Optional[List[dict]] = None) -> Dict[str, Any]:
     if not question or not question.strip():
         raise ValueError("질문이 비어있습니다.")
 
     full_question = _build_full_question(question, source_code, file_name, error_info)
+    history_messages = _build_history_messages(history)
+
     result = _graph.invoke({
-        "messages": [HumanMessage(content=full_question)],
+        "messages": history_messages + [HumanMessage(content=full_question)],
         "intent": None,
         "context": None,
     })
@@ -350,16 +369,17 @@ _NODE_STEPS = {
 }
 
 
-async def run_agent_stream(question: str, source_code: Optional[str] = None, file_name: Optional[str] = None, error_info: Optional[str] = None):
+async def run_agent_stream(question: str, source_code: Optional[str] = None, file_name: Optional[str] = None, error_info: Optional[str] = None, history: Optional[List[dict]] = None):
     if not question or not question.strip():
         raise ValueError("질문이 비어있습니다.")
 
     full_question = _build_full_question(question, source_code, file_name, error_info)
+    history_messages = _build_history_messages(history)
     collected_content = []
 
     async for event in _graph.astream_events(
         {
-            "messages": [HumanMessage(content=full_question)],
+            "messages": history_messages + [HumanMessage(content=full_question)],
             "intent": None,
             "context": None,
         },

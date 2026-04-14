@@ -10,6 +10,7 @@ class AskRequest(BaseModel):
     source_code: Optional[str] = Field(None, description="현재 편집 중인 소스코드")
     file_name: Optional[str] = Field(None, description="파일명")
     error_info: Optional[str] = Field(None, description="에러 정보")
+    history: Optional[List[dict]] = Field(None, description="이전 대화 히스토리 [{role, content}]")
 
 
 class StreamEvent(BaseModel):

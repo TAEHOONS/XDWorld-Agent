@@ -23,7 +23,8 @@ async def ask(req: AskRequest):
             req.question,
             source_code=req.source_code,
             file_name=req.file_name,
-            error_info=req.error_info
+            error_info=req.error_info,
+            history=req.history
         )
         code_suggestions = None
         if result.get("code_suggestions"):
@@ -57,7 +58,8 @@ async def ask_stream(req: AskRequest):
                 req.question,
                 source_code=req.source_code,
                 file_name=req.file_name,
-                error_info=req.error_info
+                error_info=req.error_info,
+                history=req.history
             ):
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
             
