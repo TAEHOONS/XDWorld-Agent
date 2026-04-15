@@ -10,14 +10,19 @@ from app.core.config import get_settings
 from app.core.logging import logger
 from app.api.routes import api_router
 from app.services.vectorstore import load_vectorstore
+from app.db.database import init_db, create_tables
+from app.db.redis_store import init_redis
+from app.db.models import Conversation, Message, MessageEmbedding  # 명시적 import
 
 STATIC_DIR = Path(__file__).parent / "static"
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """앱 시작 시 벡터스토어를 미리 로드합니다."""
-    logger.info("앱 시작 - 벡터스토어 사전 로드")
+    logger.info("앱 시작 - 초기화 중")
+    init_db()
+    init_redis()
+    create_tables()
     try:
         load_vectorstore()
     except Exception as exc:

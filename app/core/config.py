@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     vectorstore_dir: str = "data/vectorstore"
     retriever_k: int = 4
 
+    # Database
+    database_url: str = "postgresql+asyncpg://xdworld:xdworld@localhost:5432/xdworld_agent"
+
+    # Redis
+    redis_url: str = "redis://localhost:6379"
+
     # App
     app_title: str = "XDWorld Agent"
     app_version: str = "1.0.0"

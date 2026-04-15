@@ -1,0 +1,10 @@
+.venv
+__pycache__
+*.pyc
+.git
+.vscode
+.kiro
+node_modules
+.nuxt
+.output
+*.log
