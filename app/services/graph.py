@@ -20,6 +20,7 @@ from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
+from langgraph.checkpoint.postgres import PostgresSaver
 
 from app.core.config import get_settings
 from app.core.exceptions import LLMError
@@ -218,6 +219,18 @@ def route_by_intent(state: AgentState) -> str:
 
 # ── Graph ──────────────────────────────────────────────
 
+def _get_checkpointer():
+    """PostgreSQL checkpointer 생성"""
+    settings = get_settings()
+    # psycopg URL로 변환
+    db_url = settings.database_url.replace("postgresql+asyncpg://", "postgresql://").replace("postgresql+psycopg2://", "postgresql://")
+    
+    # PostgresSaver 직접 생성
+    import psycopg
+    conn = psycopg.connect(db_url, autocommit=True, prepare_threshold=0)
+    return PostgresSaver(conn)
+
+
 def _build_graph():
     workflow = StateGraph(AgentState)
 
@@ -246,7 +259,10 @@ def _build_graph():
     workflow.add_edge("rag_search", "agent")
     workflow.add_edge("agent", END)
 
-    return workflow.compile()
+    # Human-in-the-Loop: code_generation 후 중단
+    checkpointer = _get_checkpointer()
+    checkpointer.setup()  # 테이블 생성
+    return workflow.compile(checkpointer=checkpointer, interrupt_before=["agent"])
 
 
 _graph = _build_graph()
@@ -352,23 +368,96 @@ def _build_history_messages(history: Optional[List[dict]]) -> List[BaseMessage]:
     return messages
 
 
-def run_agent(question: str, source_code: Optional[str] = None, file_name: Optional[str] = None, error_info: Optional[str] = None, history: Optional[List[dict]] = None) -> Dict[str, Any]:
+def run_agent(
+    question: str, 
+    source_code: Optional[str] = None, 
+    file_name: Optional[str] = None, 
+    error_info: Optional[str] = None, 
+    history: Optional[List[dict]] = None,
+    thread_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Agent 실행. thread_id가 있으면 중단된 상태에서 재개.
+    
+    Returns:
+        - 정상 완료: {"answer": ..., "code_suggestions": ...}
+        - 중단됨: {"interrupted": True, "thread_id": ..., "context": ..., "next_node": "agent"}
+    """
     if not question or not question.strip():
         raise ValueError("질문이 비어있습니다.")
 
     full_question = _build_full_question(question, source_code, file_name, error_info)
     history_messages = _build_history_messages(history)
+    
+    # thread_id 생성 (없으면 새로 생성)
+    import uuid
+    if not thread_id:
+        thread_id = str(uuid.uuid4())
+    
+    config = {"configurable": {"thread_id": thread_id}}
 
     result = _graph.invoke({
         "messages": history_messages + [HumanMessage(content=full_question)],
         "intent": None,
         "context": None,
-    })
+    }, config=config)
+    
+    # 중단 여부 확인
+    state = _graph.get_state(config)
+    if state.next:  # 다음 노드가 있으면 중단된 상태
+        return {
+            "interrupted": True,
+            "thread_id": thread_id,
+            "context": result.get("context", ""),
+            "intent": result.get("intent", ""),
+            "next_node": state.next[0] if state.next else None
+        }
 
+    # 정상 완료
     for msg in reversed(result["messages"]):
         if isinstance(msg, AIMessage) and msg.content:
             return _parse_response(msg.content)
 
+    return {"answer": "답변을 생성하지 못했습니다.", "code_suggestions": None}
+
+
+def resume_agent(thread_id: str, approved: bool = True, additional_context: Optional[str] = None) -> Dict[str, Any]:
+    """
+    중단된 Agent 재개.
+    
+    Args:
+        thread_id: 중단된 스레드 ID
+        approved: 사용자 승인 여부
+        additional_context: 추가 컨텍스트 (사용자가 수정/추가한 내용)
+    
+    Returns:
+        {"answer": ..., "code_suggestions": ...}
+    """
+    config = {"configurable": {"thread_id": thread_id}}
+    
+    # 현재 상태 조회
+    state = _graph.get_state(config)
+    if not state.next:
+        raise ValueError("재개할 중단 상태가 없습니다.")
+    
+    # 사용자가 거부하면 중단
+    if not approved:
+        return {"answer": "사용자가 코드 생성을 취소했습니다.", "code_suggestions": None}
+    
+    # 추가 컨텍스트가 있으면 상태 업데이트
+    if additional_context:
+        current_context = state.values.get("context", "")
+        updated_context = f"{current_context}\n\n[사용자 추가 요청]\n{additional_context}"
+        _graph.update_state(config, {"context": updated_context})
+    
+    # 재개
+    result = _graph.invoke(None, config=config)
+    
+    # 응답 파싱
+    for msg in reversed(result["messages"]):
+        if isinstance(msg, AIMessage) and msg.content:
+            return _parse_response(msg.content)
+    
     return {"answer": "답변을 생성하지 못했습니다.", "code_suggestions": None}
 
 
