@@ -59,5 +59,16 @@ class AskResponse(BaseModel):
         }
 
 
+class InterruptedResponse(BaseModel):
+    """Human-in-the-Loop 중단 응답"""
+    interrupted: bool = Field(True, description="중단 여부")
+    thread_id: str = Field(..., description="재개용 스레드 ID")
+    conversation_id: str = Field(..., description="대화 세션 ID")
+    context: str = Field(..., description="검색된 문서 컨텍스트")
+    intent: str = Field(..., description="의도 분류 결과")
+    next_node: Optional[str] = Field(None, description="다음 실행 노드")
+    message: str = Field(default="코드 생성 전 검색된 문서를 확인하세요. /api/v1/ask/resume로 계속 진행하세요.", description="안내 메시지")
+
+
 class ErrorResponse(BaseModel):
     detail: str = Field(..., description="에러 메시지")
