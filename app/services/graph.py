@@ -92,6 +92,10 @@ def intent_router_node(state: AgentState) -> AgentState:
     return {"intent": intent, "context": None}
 
 
+    logger.info("Intent 분류: %s", intent)
+    return {"intent": intent, "context": None}
+
+
 # ── Node 2: Error Analysis ─────────────────────────────
 
 def error_analysis_node(state: AgentState) -> AgentState:
@@ -255,11 +259,11 @@ def _build_graph():
 
     # 각 전문 노드 → agent (최종 답변)
     workflow.add_edge("error_analysis", "agent")
-    workflow.add_edge("code_generation", "agent")
     workflow.add_edge("rag_search", "agent")
+    workflow.add_edge("code_generation", "agent")
     workflow.add_edge("agent", END)
 
-    # Human-in-the-Loop: code_generation 후 중단
+    # Checkpointer 설정 + agent 전 중단
     checkpointer = _get_checkpointer()
     checkpointer.setup()  # 테이블 생성
     return workflow.compile(checkpointer=checkpointer, interrupt_before=["agent"])
@@ -374,7 +378,8 @@ def run_agent(
     file_name: Optional[str] = None, 
     error_info: Optional[str] = None, 
     history: Optional[List[dict]] = None,
-    thread_id: Optional[str] = None
+    thread_id: Optional[str] = None,
+    db: Optional[Any] = None
 ) -> Dict[str, Any]:
     """
     Agent 실행. thread_id가 있으면 중단된 상태에서 재개.
@@ -389,6 +394,18 @@ def run_agent(
     full_question = _build_full_question(question, source_code, file_name, error_info)
     history_messages = _build_history_messages(history)
     
+    # 유사 대화 검색 및 컨텍스트 추가
+    similar_context = ""
+    if db:
+        from app.services.conversation import search_similar_conversations
+        similar = search_similar_conversations(question, db, limit=3)
+        if similar:
+            similar_parts = ["[과거 유사 대화 참고]"]
+            for s in similar:
+                similar_parts.append(f"- {s['role']}: {s['summary']} (유사도: {s['similarity']:.2f})")
+            similar_context = "\n".join(similar_parts)
+            logger.info("유사 대화 %d개 추가", len(similar))
+    
     # thread_id 생성 (없으면 새로 생성)
     import uuid
     if not thread_id:
@@ -399,20 +416,27 @@ def run_agent(
     result = _graph.invoke({
         "messages": history_messages + [HumanMessage(content=full_question)],
         "intent": None,
-        "context": None,
+        "context": similar_context,
     }, config=config)
     
     # 중단 여부 확인
     state = _graph.get_state(config)
-    if state.next:  # 다음 노드가 있으면 중단된 상태
+    intent = result.get("intent", "")
+    
+    # code_generation일 때만 중단 상태 반환
+    if intent == "code_generation" and state.next:
         return {
             "interrupted": True,
             "thread_id": thread_id,
             "context": result.get("context", ""),
-            "intent": result.get("intent", ""),
-            "next_node": state.next[0] if state.next else None
+            "intent": intent,
+            "message": "검색된 API 문서를 확인하고 코드 생성을 승인해주세요."
         }
-
+    
+    # error_analysis, rag_search는 중단 무시하고 바로 재개
+    if state.next and intent != "code_generation":
+        result = _graph.invoke(None, config=config)
+    
     # 정상 완료
     for msg in reversed(result["messages"]):
         if isinstance(msg, AIMessage) and msg.content:
@@ -475,19 +499,39 @@ _NODE_STEPS = {
 }
 
 
-async def run_agent_stream(question: str, source_code: Optional[str] = None, file_name: Optional[str] = None, error_info: Optional[str] = None, history: Optional[List[dict]] = None):
+async def run_agent_stream(
+    question: str, 
+    source_code: Optional[str] = None, 
+    file_name: Optional[str] = None, 
+    error_info: Optional[str] = None, 
+    history: Optional[List[dict]] = None,
+    db: Optional[Any] = None
+):
     if not question or not question.strip():
         raise ValueError("질문이 비어있습니다.")
 
     full_question = _build_full_question(question, source_code, file_name, error_info)
     history_messages = _build_history_messages(history)
+    
+    # 유사 대화 검색 및 컨텍스트 추가
+    similar_context = ""
+    if db:
+        from app.services.conversation import search_similar_conversations
+        similar = search_similar_conversations(question, db, limit=3)
+        if similar:
+            similar_parts = ["[과거 유사 대화 참고]"]
+            for s in similar:
+                similar_parts.append(f"- {s['role']}: {s['summary']} (유사도: {s['similarity']:.2f})")
+            similar_context = "\n".join(similar_parts)
+            logger.info("유사 대화 %d개 추가", len(similar))
+    
     collected_content = []
 
     async for event in _graph.astream_events(
         {
             "messages": history_messages + [HumanMessage(content=full_question)],
             "intent": None,
-            "context": None,
+            "context": similar_context,
         },
         version="v1"
     ):

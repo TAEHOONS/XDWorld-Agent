@@ -36,7 +36,8 @@ async def ask(req: AskRequest, db: Session = Depends(get_db)):
             source_code=req.source_code,
             file_name=req.file_name,
             error_info=req.error_info,
-            history=history
+            history=history,
+            db=db
         )
         
         # Human-in-the-Loop 중단 체크
@@ -129,7 +130,8 @@ async def ask_stream(req: AskRequest, db: Session = Depends(get_db)):
                 source_code=req.source_code,
                 file_name=req.file_name,
                 error_info=req.error_info,
-                history=history
+                history=history,
+                db=db
             ):
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
                 
