@@ -3,14 +3,15 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.db.database import get_db
+from app.db.database import _session_factory  # noqa: F401  (런타임에 init_db 이후 채워짐)
+from app.db import database as _db_module
 from app.db.models import Conversation, Message, MessageEmbedding
 from app.db.redis_store import get_history, append_history
 from app.services.embedding import summarize_message, generate_embedding
 from app.core.logging import logger
 
 
-def get_or_create_conversation(conversation_id: Optional[str], db: Session) -> tuple[str, list[dict]]:
+def get_or_create_conversation(conversation_id: Optional[str], user_id: str, db: Session) -> tuple[str, list[dict]]:
     """
     대화 세션 조회 또는 생성.
     
@@ -18,20 +19,23 @@ def get_or_create_conversation(conversation_id: Optional[str], db: Session) -> t
         (conversation_id, history)
     """
     if conversation_id:
-        # 기존 대화 확인
-        conv = db.query(Conversation).filter(Conversation.id == uuid.UUID(conversation_id)).first()
+        # 기존 대화 확인 (user_id도 검증)
+        conv = db.query(Conversation).filter(
+            Conversation.id == uuid.UUID(conversation_id),
+            Conversation.user_id == user_id
+        ).first()
         if not conv:
-            logger.warning(f"존재하지 않는 conversation_id: {conversation_id}, 새로 생성")
+            logger.warning(f"존재하지 않거나 권한 없는 conversation_id: {conversation_id}, 새로 생성")
             conversation_id = None
     
     if not conversation_id:
         # 새 대화 생성
-        conv = Conversation()
+        conv = Conversation(user_id=user_id)
         db.add(conv)
         db.commit()
         db.refresh(conv)
         conversation_id = str(conv.id)
-        logger.info(f"새 대화 생성: {conversation_id}")
+        logger.info(f"새 대화 생성: {conversation_id} (user: {user_id})")
         return conversation_id, []
     
     # Redis에서 히스토리 조회
@@ -39,8 +43,8 @@ def get_or_create_conversation(conversation_id: Optional[str], db: Session) -> t
     return conversation_id, history
 
 
-def save_message(conversation_id: str, role: str, content: str, db: Session):
-    """메시지를 DB와 Redis에 저장하고, 요약 임베딩 생성"""
+def save_message(conversation_id: str, role: str, content: str, db: Session) -> uuid.UUID:
+    """메시지를 DB와 Redis에 저장하고 message_id 반환. 임베딩은 백그라운드에서 처리."""
     msg = Message(
         conversation_id=uuid.UUID(conversation_id),
         role=role,
@@ -49,39 +53,48 @@ def save_message(conversation_id: str, role: str, content: str, db: Session):
     db.add(msg)
     db.commit()
     db.refresh(msg)
-    
-    # Redis에도 저장
+
     append_history(conversation_id, role, content)
-    
-    # 요약 및 임베딩 생성 (비동기 처리 권장하지만 일단 동기로)
+    logger.info(f"메시지 저장 완료: {conversation_id} / {role}")
+    return msg.id
+
+
+def create_embedding_for_message(message_id: uuid.UUID, role: str, content: str) -> None:
+    """LLM 요약 + 임베딩 + 저장. BackgroundTasks에서 호출 (별도 DB 세션 사용)."""
     try:
         summary = summarize_message(role, content)
         embedding_vector = generate_embedding(summary)
-        
-        embedding = MessageEmbedding(
-            message_id=msg.id,
-            summary=summary,
-            embedding=embedding_vector
-        )
-        db.add(embedding)
-        db.commit()
-        logger.info(f"임베딩 저장 완료: {msg.id}")
     except Exception as e:
-        logger.error(f"임베딩 저장 실패: {e}")
-        # 임베딩 실패해도 메시지는 저장됨
-    
-    logger.info(f"메시지 저장 완료: {conversation_id} / {role}")
+        logger.error(f"임베딩 생성 실패 (message_id={message_id}): {e}")
+        return
+
+    if _db_module._session_factory is None:
+        logger.error("세션 팩토리 미초기화 - 임베딩 저장 스킵")
+        return
+
+    with _db_module._session_factory() as session:
+        try:
+            session.add(MessageEmbedding(
+                message_id=message_id,
+                summary=summary,
+                embedding=embedding_vector
+            ))
+            session.commit()
+            logger.info(f"임베딩 저장 완료: {message_id}")
+        except Exception as e:
+            session.rollback()
+            logger.error(f"임베딩 저장 실패 (message_id={message_id}): {e}")
 
 
-def search_similar_conversations(query: str, db: Session, limit: int = 5) -> list[dict]:
-    """유사한 대화 검색 (pgvector)"""
+def search_similar_conversations(query: str, user_id: str, db: Session, limit: int = 5) -> list[dict]:
+    """유사한 대화 검색 (pgvector) - 사용자별 격리"""
     from sqlalchemy import text
     
     try:
         # 쿼리 임베딩 생성
         query_vector = generate_embedding(query)
         
-        # pgvector cosine similarity 검색
+        # pgvector cosine similarity 검색 (user_id 필터 추가)
         sql = text("""
             SELECT 
                 m.id,
@@ -91,11 +104,17 @@ def search_similar_conversations(query: str, db: Session, limit: int = 5) -> lis
                 1 - (me.embedding <=> :query_vector) as similarity
             FROM message_embeddings me
             JOIN messages m ON me.message_id = m.id
+            JOIN conversations c ON m.conversation_id = c.id
+            WHERE c.user_id = :user_id
             ORDER BY me.embedding <=> :query_vector
             LIMIT :limit
         """)
         
-        result = db.execute(sql, {"query_vector": str(query_vector), "limit": limit})
+        result = db.execute(sql, {
+            "query_vector": str(query_vector), 
+            "user_id": user_id,
+            "limit": limit
+        })
         
         similar = []
         for row in result:
@@ -107,7 +126,7 @@ def search_similar_conversations(query: str, db: Session, limit: int = 5) -> lis
                 "similarity": float(row.similarity)
             })
         
-        logger.info(f"유사 대화 {len(similar)}개 검색 완료")
+        logger.info(f"유사 대화 {len(similar)}개 검색 완료 (user: {user_id})")
         return similar
         
     except Exception as e:

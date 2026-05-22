@@ -13,6 +13,7 @@ from app.services.vectorstore import load_vectorstore
 from app.db.database import init_db, create_tables
 from app.db.redis_store import init_redis
 from app.db.models import Conversation, Message, MessageEmbedding  # 명시적 import
+import app.services.graph as graph_module
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -27,6 +28,11 @@ async def lifespan(app: FastAPI):
         load_vectorstore()
     except Exception as exc:
         logger.warning("벡터스토어 사전 로드 실패: %s", exc)
+    try:
+        graph_module._graph_streaming = await graph_module._build_graph_streaming()
+        logger.info("스트리밍 그래프 초기화 완료")
+    except Exception as exc:
+        logger.warning("스트리밍 그래프 초기화 실패: %s", exc)
     yield
     logger.info("앱 종료")
 
@@ -42,10 +48,17 @@ def create_app() -> FastAPI:
         redoc_url="/redoc",
     )
 
+    # CORS: "*" + credentials=True 조합은 브라우저가 거부하므로 자동 다운그레이드.
+    origins = settings.cors_origins or []
+    use_wildcard = "*" in origins or not origins
+    if use_wildcard:
+        logger.warning(
+            "CORS_ORIGINS 미설정 또는 '*' 사용 - credentials 비활성화. 운영에선 도메인 명시 권장."
+        )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_origins,
-        allow_credentials=True,
+        allow_origins=origins if origins else ["*"],
+        allow_credentials=not use_wildcard,
         allow_methods=["*"],
         allow_headers=["*"],
     )

@@ -8,8 +8,9 @@ def setup_logging() -> logging.Logger:
     settings = get_settings()
     level = getattr(logging, settings.log_level.upper(), logging.INFO)
 
+    # gunicorn 멀티워커 환경에서 어느 워커가 찍은 로그인지 식별 가능하도록 PID 포함
     formatter = logging.Formatter(
-        fmt="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+        fmt="%(asctime)s | %(levelname)-8s | pid=%(process)d | %(name)s | %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
