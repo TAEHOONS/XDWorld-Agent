@@ -28,3 +28,6 @@ Thumbs.db
 *.pem
 *.key
 vibe-agent-streaming
+
+# Local-only docker override (테스트용 네트워킹 교정)
+docker-compose.override.yml

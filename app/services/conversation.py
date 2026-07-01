@@ -59,11 +59,20 @@ def save_message(conversation_id: str, role: str, content: str, db: Session) -> 
     return msg.id
 
 
-def create_embedding_for_message(message_id: uuid.UUID, role: str, content: str) -> None:
-    """LLM 요약 + 임베딩 + 저장. BackgroundTasks에서 호출 (별도 DB 세션 사용)."""
+def create_embedding_for_message(
+    message_id: uuid.UUID,
+    role: str,
+    content: str,
+    user_id: Optional[str] = None,
+    conversation_id: Optional[str] = None,
+) -> None:
+    """LLM 요약 + 임베딩 + 저장. BackgroundTasks에서 호출 (별도 DB 세션 사용).
+
+    user_id가 있으면 요약·임베딩 토큰 사용량도 함께 기록한다.
+    """
     try:
-        summary = summarize_message(role, content)
-        embedding_vector = generate_embedding(summary)
+        summary = summarize_message(role, content, user_id, conversation_id)
+        embedding_vector = generate_embedding(summary, user_id, conversation_id)
     except Exception as e:
         logger.error(f"임베딩 생성 실패 (message_id={message_id}): {e}")
         return
@@ -91,8 +100,8 @@ def search_similar_conversations(query: str, user_id: str, db: Session, limit: i
     from sqlalchemy import text
     
     try:
-        # 쿼리 임베딩 생성
-        query_vector = generate_embedding(query)
+        # 쿼리 임베딩 생성 (사용량은 해당 user_id로 기록)
+        query_vector = generate_embedding(query, user_id=user_id)
         
         # pgvector cosine similarity 검색 (user_id 필터 추가)
         sql = text("""

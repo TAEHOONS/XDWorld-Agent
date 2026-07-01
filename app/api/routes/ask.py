@@ -43,7 +43,7 @@ async def ask(
 
         # 사용자 메시지 저장 (임베딩은 백그라운드로)
         user_msg_id = save_message(conversation_id, "user", req.question, db)
-        background_tasks.add_task(create_embedding_for_message, user_msg_id, "user", req.question)
+        background_tasks.add_task(create_embedding_for_message, user_msg_id, "user", req.question, user_id, conversation_id)
 
         # Agent 실행
         result = run_agent(
@@ -53,7 +53,8 @@ async def ask(
             error_info=req.error_info,
             history=history,
             db=db,
-            user_id=user_id
+            user_id=user_id,
+            conversation_id=conversation_id
         )
 
         # Human-in-the-Loop 중단 체크
@@ -68,7 +69,7 @@ async def ask(
 
         # Assistant 응답 저장 (임베딩은 백그라운드로)
         assistant_msg_id = save_message(conversation_id, "assistant", result["answer"], db)
-        background_tasks.add_task(create_embedding_for_message, assistant_msg_id, "assistant", result["answer"])
+        background_tasks.add_task(create_embedding_for_message, assistant_msg_id, "assistant", result["answer"], user_id, conversation_id)
         
         code_suggestions = None
         if result.get("code_suggestions"):
@@ -97,11 +98,12 @@ async def resume(
     thread_id: str,
     approved: bool = True,
     additional_context: str = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user_id: str = Depends(get_current_user)
 ):
     async def event_generator():
         try:
-            async for event in resume_agent_stream(thread_id, approved, additional_context):
+            async for event in resume_agent_stream(thread_id, approved, additional_context, user_id=user_id, conversation_id=thread_id):
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
         except ValueError as exc:
@@ -139,7 +141,7 @@ async def ask_stream(
 
             # 사용자 메시지 저장 (임베딩은 백그라운드로)
             user_msg_id = save_message(conversation_id, "user", req.question, db)
-            background_tasks.add_task(create_embedding_for_message, user_msg_id, "user", req.question)
+            background_tasks.add_task(create_embedding_for_message, user_msg_id, "user", req.question, user_id, conversation_id)
 
             # 시작 이벤트 (conversation_id 포함)
             yield f"data: {json.dumps({'type': 'start', 'conversation_id': conversation_id}, ensure_ascii=False)}\n\n"
@@ -156,7 +158,8 @@ async def ask_stream(
                 history=history,
                 thread_id=req.conversation_id,
                 db=db,
-                user_id=user_id
+                user_id=user_id,
+                conversation_id=conversation_id
             ):
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
@@ -172,7 +175,7 @@ async def ask_stream(
             # 중단되지 않았으면 Assistant 응답 저장 (임베딩은 백그라운드로)
             if not interrupted and collected_answer:
                 assistant_msg_id = save_message(conversation_id, "assistant", collected_answer, db)
-                background_tasks.add_task(create_embedding_for_message, assistant_msg_id, "assistant", collected_answer)
+                background_tasks.add_task(create_embedding_for_message, assistant_msg_id, "assistant", collected_answer, user_id, conversation_id)
             
             # 완료 이벤트
             if not interrupted:
@@ -212,9 +215,10 @@ async def _process_ask_background(
             error_info=req.error_info,
             history=history,
             db=db,
-            user_id=user_id
+            user_id=user_id,
+            conversation_id=conversation_id
         )
-        
+
         if result.get("interrupted"):
             response = {
                 "status": "interrupted",
@@ -226,7 +230,7 @@ async def _process_ask_background(
         else:
             assistant_msg_id = save_message(conversation_id, "assistant", result["answer"], db)
             # 이미 백그라운드 컨텍스트이므로 동기 호출 (응답 경로 영향 없음)
-            create_embedding_for_message(assistant_msg_id, "assistant", result["answer"])
+            create_embedding_for_message(assistant_msg_id, "assistant", result["answer"], user_id, conversation_id)
             response = {
                 "status": "completed",
                 "request_id": request_id,
@@ -265,7 +269,7 @@ async def ask_async(
         request_id = create_request_id()
         conversation_id, history = get_or_create_conversation(req.conversation_id, user_id, db)
         user_msg_id = save_message(conversation_id, "user", req.question, db)
-        background_tasks.add_task(create_embedding_for_message, user_msg_id, "user", req.question)
+        background_tasks.add_task(create_embedding_for_message, user_msg_id, "user", req.question, user_id, conversation_id)
 
         # 백그라운드 작업 등록
         background_tasks.add_task(

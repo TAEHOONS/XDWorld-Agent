@@ -28,6 +28,7 @@ from app.core.exceptions import LLMError
 from app.core.logging import logger
 from app.services.vectorstore import get_retriever
 from app.services.prompts import AGENT_SYSTEM_PROMPT
+from app.services.usage import UsageCollector
 
 
 # ── State ──────────────────────────────────────────────
@@ -68,6 +69,8 @@ def _get_llm(temperature: Optional[float] = None):
         model=settings.openai_model,
         api_key=settings.openai_api_key,
         temperature=temperature if temperature is not None else settings.openai_temperature,
+        # 스트리밍 응답에도 토큰 usage를 마지막 청크에 포함시켜 사용량 측정이 가능하게 함
+        stream_usage=True,
     )
 
 
@@ -388,11 +391,12 @@ def run_agent(
     history: Optional[List[dict]] = None,
     thread_id: Optional[str] = None,
     db: Optional[Any] = None,
-    user_id: Optional[str] = None
+    user_id: Optional[str] = None,
+    conversation_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Agent 실행. thread_id가 있으면 중단된 상태에서 재개.
-    
+
     Returns:
         - 정상 완료: {"answer": ..., "code_suggestions": ...}
         - 중단됨: {"interrupted": True, "thread_id": ..., "context": ..., "next_node": "agent"}
@@ -420,20 +424,23 @@ def run_agent(
     if not thread_id:
         thread_id = str(uuid.uuid4())
     
-    config = {"configurable": {"thread_id": thread_id}}
+    # 그래프 내부 모든 chat 호출(intent/expand/rerank/agent) 토큰을 콜백으로 포착
+    collector = UsageCollector()
+    config = {"configurable": {"thread_id": thread_id}, "callbacks": [collector]}
 
     result = _graph.invoke({
         "messages": history_messages + [HumanMessage(content=full_question)],
         "intent": None,
         "context": similar_context,
     }, config=config)
-    
+
     # 중단 여부 확인
     state = _graph.get_state(config)
     intent = state.values.get("intent", "")
-    
+
     # code_generation일 때만 중단 상태 반환
     if intent == "code_generation" and state.next:
+        collector.flush(user_id, conversation_id)
         return {
             "interrupted": True,
             "thread_id": thread_id,
@@ -441,11 +448,13 @@ def run_agent(
             "intent": intent,
             "message": "검색된 API 문서를 확인하고 코드 생성을 승인해주세요."
         }
-    
+
     # error_analysis, rag_search는 중단 무시하고 바로 재개
     if state.next and intent != "code_generation":
         result = _graph.invoke(None, config=config)
-    
+
+    collector.flush(user_id, conversation_id)
+
     # 정상 완료
     for msg in reversed(result["messages"]):
         if isinstance(msg, AIMessage) and msg.content:
@@ -457,14 +466,17 @@ def run_agent(
 async def resume_agent_stream(
     thread_id: str,
     approved: bool = True,
-    additional_context: Optional[str] = None
+    additional_context: Optional[str] = None,
+    user_id: Optional[str] = None,
+    conversation_id: Optional[str] = None
 ):
     """중단된 Agent를 SSE로 재개. step/token/code_pending/result 이벤트 yield."""
     global _graph_streaming
     if _graph_streaming is None:
         _graph_streaming = await _build_graph_streaming()
 
-    config = {"configurable": {"thread_id": thread_id}}
+    collector = UsageCollector()
+    config = {"configurable": {"thread_id": thread_id}, "callbacks": [collector]}
 
     state = await _graph_streaming.aget_state(config)
     if not state.next:
@@ -482,6 +494,8 @@ async def resume_agent_stream(
     collected_content: List[str] = []
     async for evt in _stream_graph_events(None, config, collected_content):
         yield evt
+
+    collector.flush(user_id, conversation_id or thread_id)
 
     full_content = "".join(collected_content)
     if full_content:
@@ -617,7 +631,8 @@ async def run_agent_stream(
     history: Optional[List[dict]] = None,
     thread_id: Optional[str] = None,
     db: Optional[Any] = None,
-    user_id: Optional[str] = None
+    user_id: Optional[str] = None,
+    conversation_id: Optional[str] = None
 ):
     global _graph_streaming
     if _graph_streaming is None:
@@ -645,7 +660,9 @@ async def run_agent_stream(
     if not thread_id:
         thread_id = str(uuid.uuid4())
 
-    config = {"configurable": {"thread_id": thread_id}}
+    # 그래프 내부 모든 chat 호출 토큰을 콜백으로 포착
+    collector = UsageCollector()
+    config = {"configurable": {"thread_id": thread_id}, "callbacks": [collector]}
     collected_content: List[str] = []
 
     # Phase 1: 검색 노드까지 실행 (interrupt_before=["agent"]로 자동 중단)
@@ -663,6 +680,7 @@ async def run_agent_stream(
 
     # code_generation은 HITL 중단 (사용자 승인 후 /resume으로 재개)
     if state.next and intent == "code_generation":
+        collector.flush(user_id, conversation_id or thread_id)
         yield {
             "type": "interrupted",
             "thread_id": thread_id,
@@ -676,6 +694,8 @@ async def run_agent_stream(
     if state.next:
         async for evt in _stream_graph_events(None, config, collected_content):
             yield evt
+
+    collector.flush(user_id, conversation_id or thread_id)
 
     # 최종 답변
     full_content = "".join(collected_content)

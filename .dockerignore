@@ -1,10 +1,21 @@
+# 회사 표준 (app-dev backend 참고)
+.git
+**/@tmp
+**/.DS_Store
+**/*.log
+
+# 보안 (필수 — 회사 표준엔 없지만 .env 쓰는 서비스라 추가)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python 캐시/가상환경
 .venv
+venv/
 __pycache__
 *.pyc
-.git
-.vscode
-.kiro
-node_modules
-.nuxt
-.output
-*.log
+
+# 생성 산출물
+#data/vectorstore/

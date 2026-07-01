@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     cors_origins: List[str] = []
     log_level: str = "INFO"
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 
 @lru_cache

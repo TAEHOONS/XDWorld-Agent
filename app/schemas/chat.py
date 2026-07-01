@@ -2,16 +2,51 @@ from __future__ import annotations
 
 from typing import List, Optional, Literal
 
-from pydantic import BaseModel, Field
+import tiktoken
+from pydantic import BaseModel, Field, field_validator
+
+
+MAX_SOURCE_CODE_TOKENS = 8000
+
+_TOKEN_ENCODER = None
+
+
+def _count_tokens(text: str) -> int:
+    global _TOKEN_ENCODER
+    if _TOKEN_ENCODER is None:
+        _TOKEN_ENCODER = tiktoken.get_encoding("o200k_base")
+    return len(_TOKEN_ENCODER.encode(text))
 
 
 class AskRequest(BaseModel):
     conversation_id: Optional[str] = Field(None, description="대화 세션 ID (없으면 새로 생성)")
-    question: str = Field(..., min_length=1, max_length=2000, description="질문 내용")
+    question: str = Field(..., min_length=1, description="질문 내용")
     source_code: Optional[str] = Field(None, description="현재 편집 중인 소스코드")
     file_name: Optional[str] = Field(None, description="파일명")
     error_info: Optional[str] = Field(None, description="에러 정보")
     # history는 이제 Redis에서 자동으로 가져오므로 제거
+
+    @field_validator("question")
+    @classmethod
+    def _validate_question_length(cls, v: str) -> str:
+        if len(v) > 2000:
+            raise ValueError(
+                f"질문이 너무 깁니다 ({len(v)}자 / 최대 2000자). 코드는 에디터에 두고 질문만 간략히 작성해주세요."
+            )
+        return v
+
+    @field_validator("source_code")
+    @classmethod
+    def _validate_source_code_tokens(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        token_count = _count_tokens(v)
+        if token_count > MAX_SOURCE_CODE_TOKENS:
+            raise ValueError(
+                f"코드가 너무 깁니다 ({token_count}토큰 / 최대 {MAX_SOURCE_CODE_TOKENS}토큰). "
+                f"질문과 관련된 함수나 부분만 보내주세요."
+            )
+        return v
 
 
 class StreamEvent(BaseModel):
@@ -27,8 +62,10 @@ class StreamEvent(BaseModel):
 class CodeSuggestion(BaseModel):
     filename: str = Field(..., description="대상 파일명 (예: App.vue, stores/appStore.js)")
     language: str = Field(..., description="언어 (vue, js, ts, html, css)")
+    action: str = Field(default="auto", description="적용 방식 (replace_file, insert_function, insert_script, auto)")
     code: str = Field(..., description="전체 파일 코드 (마크다운 코드블록 없이 순수 코드)")
     description: Optional[str] = Field(None, description="이 코드가 뭘 하는지 한줄 설명")
+    label: Optional[str] = Field(None, description="실행 가능한 기능일 때 앱 패널에 추가할 버튼의 한글 라벨 (예: '서울로 이동'). 설정 시 Apply하면 이 함수를 호출하는 버튼이 앱에 같이 추가됩니다.")
 
 
 class AskResponse(BaseModel):
@@ -72,3 +109,21 @@ class InterruptedResponse(BaseModel):
 
 class ErrorResponse(BaseModel):
     detail: str = Field(..., description="에러 메시지")
+
+
+
+class AskAsyncResponse(BaseModel):
+    """비동기 요청 응답"""
+    request_id: str = Field(..., description="요청 ID (결과 조회용)")
+    conversation_id: str = Field(..., description="대화 세션 ID")
+    status: str = Field(default="processing", description="처리 상태")
+
+
+class ResultResponse(BaseModel):
+    """결과 조회 응답"""
+    request_id: str
+    status: Literal["processing", "completed", "error"]
+    conversation_id: Optional[str] = None
+    answer: Optional[str] = None
+    code_suggestions: Optional[List[CodeSuggestion]] = None
+    error: Optional[str] = None

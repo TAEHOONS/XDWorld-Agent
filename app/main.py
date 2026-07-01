@@ -12,7 +12,7 @@ from app.api.routes import api_router
 from app.services.vectorstore import load_vectorstore
 from app.db.database import init_db, create_tables
 from app.db.redis_store import init_redis
-from app.db.models import Conversation, Message, MessageEmbedding  # 명시적 import
+from app.db.models import Conversation, Message, MessageEmbedding, TokenUsage  # 명시적 import (create_tables가 인식)
 import app.services.graph as graph_module
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -76,6 +76,5 @@ def create_app() -> FastAPI:
         return {"status": "ok", "version": settings.app_version}
 
     return app
-
 
 app = create_app()
